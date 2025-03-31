@@ -9,8 +9,8 @@ set(RAFT_SRCS
     ClusterConfig.cpp
     ConsensusModule.cpp
     Timer.cpp
-        LogManager.cpp
-        LogManager.h
+        PersistentStateManager.cpp
+        PersistentStateManager.h
 )
 
 add_library(
@@ -27,4 +27,5 @@ target_link_libraries(grpc_raft PUBLIC
         absl::flags
         absl::flags_parse
         tomlplusplus::tomlplusplus
+        nlohmann_json::nlohmann_json
 )

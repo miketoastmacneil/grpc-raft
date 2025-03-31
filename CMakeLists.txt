@@ -32,7 +32,7 @@ protobuf_generate(
         PLUGIN "protoc-gen-grpc=\$<TARGET_FILE:gRPC::grpc_cpp_plugin>"
 )
 
-configure_file(lib/cluster_config.toml lib/cluster_config.toml COPYONLY)
+configure_file(lib/cluster_config.toml cluster_config.toml COPYONLY)
 
 include_directories(lib)
 add_subdirectory(lib)

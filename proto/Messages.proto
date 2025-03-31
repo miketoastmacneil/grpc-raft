@@ -6,7 +6,7 @@ package raft;
 
 service Consensus {
 
-  rpc SetValue (LogEntry) returns (LogEntryResponse) {}
+  rpc SetValue (SetRequest) returns (SetResponse) {}
 
   rpc GetValue (GetRequest) returns (GetResponse) {}
 
@@ -25,14 +25,25 @@ message GetResponse {
   string leaderAddress = 3;
 }
 
-message LogEntry {
+message SetRequest {
   string key = 1;
   string value = 2;
 }
 
-message LogEntryResponse {
+message SetResponse {
   bool success = 1;
   string leaderAddress = 2;
+}
+
+// Entries are committed with a new line.
+// So we can retrieve an entry index when reading back.
+message LogEntry {
+  // Term for which this entry was committed
+  uint32 term = 2;
+  // Key of the entry
+  string key = 3;
+  // Value
+  string value = 4;
 }
 
 message AppendEntriesRequest {

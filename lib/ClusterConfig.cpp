@@ -18,7 +18,7 @@ ClusterConfig ClusterConfig::FromToml(uint16_t rank, const fs::path& path) {
         port_map[i] = ip;
     }
 
-    auto log_paths = parsed["log_paths"].as_array();
+    auto log_paths = parsed["state_paths"].as_array();
     std::map<int, std::string> log_path_map;
     for (auto i = 0; i < log_paths->size(); ++i) {
         log_path_map[i] = *log_paths->at(i).value<std::string>();

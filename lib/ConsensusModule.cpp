@@ -29,14 +29,30 @@ ConsensusModule::ConsensusModule(const ClusterConfig& config):config_{config} {
     });
     election_timer_ = std::move(raft_timer);
 
-    for (auto value:config.other_ports()) {
+}
+
+bool ConsensusModule::ConnectToPeers() {
+    int connected = 0;
+    for (auto value:config_.other_ports()) {
         auto channel = grpc::CreateChannel(value, grpc::InsecureChannelCredentials());
+        if (channel->WaitForConnected(std::chrono::system_clock::now() + std::chrono::milliseconds(1000))) {
+            std::cout << "Connected to " << value << "\n";
+            connected++;
+        }
         auto stub = raft::Consensus::NewStub(channel);
         cluster_stubs_.push_back(std::move(stub));
     }
-    std::cout << "Server started: [rank: " << config.rank() << " listening on: " << config.port() << "]" <<std::endl;
+    if (connected == config_.other_ports().size()) {
+        return true;
+    } else {
+        return false;
+    }
+}
+
+void ConsensusModule::Start() {
     election_timer_.start();
 }
+
 
 ServerUnaryReactor *ConsensusModule::SetValue(grpc::CallbackServerContext* context, const raft::SetRequest* entry, raft::SetResponse* response) {
     ServerUnaryReactor* reactor = context->DefaultReactor();
@@ -65,32 +81,52 @@ void ConsensusModule::OnElectionTimeout() {
     if (state_ == State::FOLLOWER) {
         LOG(INFO) << "Election timeout for rank: " << config_.rank() << std::endl;
         state_ = State::CANDIDATE;
-        raft::VoteRequest request;
-        request.set_candidateid(config_.rank());
+        vote_request_ = raft::VoteRequest();
+        vote_request_.set_candidateid(config_.rank());
         auto log_entries = log_manager_.LogEntries();
         if (log_entries.empty()) {
-            request.set_lastlogindex(0);
-            request.set_lastlogterm(0);
+            vote_request_.set_lastlogindex(0);
+            vote_request_.set_lastlogterm(0);
         }
         auto state = log_manager_.GetState();
         PersistentState new_state = state;
         new_state.current_term += 1;
         // Increment term now that we're a candidate
-        request.set_term(new_state.current_term);
+        vote_request_.set_term(new_state.current_term);
         log_manager_.SetState(new_state);
         election_count_ = std::make_shared<std::atomic<int>>(1);
         auto cluster_count_excluding_myself = config_.other_ports().size();
 
         votes_.clear();
         votes_.resize(cluster_count_excluding_myself);
+        contexts_.clear();
+        for (int i = 0; i < cluster_count_excluding_myself; ++i) {
+            auto ctx = std::make_unique<grpc::ClientContext>();
+            contexts_.push_back(std::move(ctx));
+        }
 
-        // for (int i = 0; i < cluster_count_excluding_myself; i++) {
-        //     // Don't want responses to outlive this call.
-        //     cluster_stubs_[i]->async()->RequestVote()
-        // }
+        for (int i = 0; i < cluster_count_excluding_myself; i++) {
+            // Don't want responses to outlive this call.
+            cluster_stubs_[i]->async()->RequestVote(contexts_[i].get(), &vote_request_, &votes_[i], [this, i](grpc::Status status) {
+                if (status.ok()) {
+                    LOG(INFO) << "Vote request successfully completed.";
+                    if (votes_[i].votegranted()) {
+                        *election_count_ += 1;
+                        if (*election_count_ >= 2) {
+                            TransitionToLeader();
+                        }
+                    }
+                }
+            });
+        }
     }
 
     if (state_ == State::CANDIDATE) {
 
     }
 }
+
+void ConsensusModule::TransitionToLeader() {
+
+}
+

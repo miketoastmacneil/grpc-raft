@@ -45,6 +45,12 @@ void RunServer(ClusterConfig config) {
     builder.RegisterService(&service);
 
     std::unique_ptr<Server> server(builder.BuildAndStart());
+    // Sleep for a minute before we try and connect to peers.
+    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+    if (service.ConnectToPeers()) {
+        std::cout << "Connected to all peers" << std::endl;
+    }
+    service.Start();
     server->Wait();
 }
 

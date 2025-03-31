@@ -24,6 +24,10 @@ public:
 
     ConsensusModule(const ClusterConfig& config);
 
+    bool ConnectToPeers();
+
+    void Start();
+
     ServerUnaryReactor* SetValue(grpc::CallbackServerContext * context, const raft::SetRequest* entry, raft::SetResponse* response) override;
 
     ServerUnaryReactor* GetValue(grpc::CallbackServerContext * context, const raft::GetRequest * request_key, raft::GetResponse * response) override;
@@ -40,9 +44,13 @@ private:
         LEADER = 2,
     };
 
+    using ClientCtxPtr = std::unique_ptr<grpc::ClientContext>;
+
     using milliseconds = std::chrono::milliseconds;
 
     void OnElectionTimeout();
+
+    void TransitionToLeader();
 
     ClusterConfig config_;
     std::atomic<State> state_;
@@ -65,7 +73,13 @@ private:
     /// for arguments for RPC requests.
     PersistentStateManager log_manager_;
 
+    /// Hold onto a vote so that it doesn't go out of scope.
+    raft::VoteRequest vote_request_;
+
     /// Persistent votes, otherwise the pointer for the
     /// async call is dangling.
     std::vector<raft::VoteResponse> votes_;
+
+    /// Contexts for getting responses;
+    std::vector<ClientCtxPtr> contexts_;
 };

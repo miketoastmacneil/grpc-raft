@@ -1,0 +1,5 @@
+
+ports = [50051, 50052, 50053, 50054, 50055]
+log_paths = ["/tmp/grpc_raft/log_1", "/tmp/grpc_raft/log_2", "/tmp/grpc_raft/log_3", "/tmp/grpc_raft/log_4", "/tmp/grpc_raft/log_5"]
+timeout_min = 150   # in ms
+timeout_max = 300   # also in ms

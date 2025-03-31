@@ -1,0 +1,76 @@
+
+
+syntax = "proto3";
+
+package raft;
+
+service Consensus {
+
+  rpc SetValue (LogEntry) returns (LogEntryResponse) {}
+
+  rpc GetValue (GetRequest) returns (GetResponse) {}
+
+  rpc AppendEntries (AppendEntriesRequest) returns (AppendEntriesResponse){}
+
+  rpc RequestVote (VoteRequest) returns (VoteResponse){}
+}
+
+message GetRequest {
+  string key = 1;
+}
+
+message GetResponse {
+  bool success = 1;
+  string value = 2;
+  string leaderAddress = 3;
+}
+
+message LogEntry {
+  string key = 1;
+  string value = 2;
+}
+
+message LogEntryResponse {
+  bool success = 1;
+  string leaderAddress = 2;
+}
+
+message AppendEntriesRequest {
+  /// Leaders current term
+  uint32 term = 1;
+  /// Leaders id, this is the "rank" passed from command line.
+  uint32 leaderId = 2;
+  /// Index of the log entry immediately preceding new ones
+  uint32 previousLogIndex = 3;
+  /// Term of the previous log entry
+  uint32 previousLogTerm = 4;
+  /// Log entries to store (for this application its just going to be one).
+  repeated LogEntry logEntries = 5;
+  ///
+  uint32 leaderCommitIndex = 6;
+}
+
+message AppendEntriesResponse {
+  /// currentTerm, for the leader to update itself.
+  uint32 term = 1;
+  /// True if follower contained entry matching previous log term and index
+  bool success = 2;
+}
+
+message VoteRequest {
+  /// Issuing candidates term
+  uint32 term = 1;
+  /// The id of the current candidate
+  uint32  candidateId = 2;
+  /// index of candidates last log entry.
+  uint32  lastLogIndex = 3;
+  /// Term of candidates last log entry
+  uint32 lastLogTerm = 4;
+}
+
+message VoteResponse {
+  /// Current for candidate to update itself.
+  uint32 term = 1;
+  /// true means the candidate received the vote.
+  bool voteGranted = 2;
+}

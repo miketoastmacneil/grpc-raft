@@ -35,22 +35,22 @@ ABSL_FLAG(std::string, cluster_config, "cluster_config.toml", "Configuration for
 
 void RunServer(ClusterConfig config) {
     std::string server_address = config.port();
-    ConsensusModule service(config);
+    std::shared_ptr<ConsensusModule> service = std::make_shared<ConsensusModule>(config);
 
     grpc::EnableDefaultHealthCheckService(true);
     grpc::reflection::InitProtoReflectionServerBuilderPlugin();
 
     grpc::ServerBuilder builder;
     builder.AddListeningPort(server_address, grpc::InsecureServerCredentials());
-    builder.RegisterService(&service);
+    builder.RegisterService(service.get());
 
     std::unique_ptr<Server> server(builder.BuildAndStart());
     // Sleep for a minute before we try and connect to peers.
     std::this_thread::sleep_for(std::chrono::milliseconds(2000));
-    if (service.ConnectToPeers()) {
+    if (service->ConnectToPeers()) {
         std::cout << "Connected to all peers" << std::endl;
     }
-    service.Start();
+    service->StartElectionTimer();
     server->Wait();
 }
 

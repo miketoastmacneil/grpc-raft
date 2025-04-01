@@ -16,17 +16,15 @@ using grpc::Server;
 using grpc::ServerBuilder;
 using grpc::ServerUnaryReactor;
 
-using AtomicIntPtr = std::shared_ptr<std::atomic<int>>;
-using StubPtr = std::unique_ptr<raft::Consensus::Stub>;
 
-class ConsensusModule final : public raft::Consensus::CallbackService {
+class ConsensusModule final : public raft::Consensus::CallbackService, public std::enable_shared_from_this<ConsensusModule> {
 public:
 
     ConsensusModule(const ClusterConfig& config);
 
     bool ConnectToPeers();
 
-    void Start();
+    void StartElectionTimer();
 
     ServerUnaryReactor* SetValue(grpc::CallbackServerContext * context, const raft::SetRequest* entry, raft::SetResponse* response) override;
 
@@ -45,6 +43,9 @@ private:
     };
 
     using ClientCtxPtr = std::unique_ptr<grpc::ClientContext>;
+    using AtomicIntPtr = std::shared_ptr<std::atomic<int>>;
+    using AtomicBoolPtr = std::shared_ptr<std::atomic<bool>>;
+    using StubPtr = std::unique_ptr<raft::Consensus::Stub>;
 
     using milliseconds = std::chrono::milliseconds;
 
@@ -52,13 +53,17 @@ private:
 
     void TransitionToLeader();
 
+    void StartLeaderHeartbeat();
+
     ClusterConfig config_;
     std::atomic<State> state_;
     milliseconds election_timeout_;
-    grpc_raft::Timer election_timer_;
+    std::unique_ptr<grpc_raft::Timer> election_timer_;
 
     // Book keeping when requesting votes.
     AtomicIntPtr election_count_ = nullptr;
+    AtomicBoolPtr new_leader_discovered_ = nullptr;
+
     std::vector<StubPtr> cluster_stubs_;
 
     /// index of highest known log entry to be
@@ -76,10 +81,22 @@ private:
     /// Hold onto a vote so that it doesn't go out of scope.
     raft::VoteRequest vote_request_;
 
+    /// Ditto if we're the leader
+    raft::AppendEntriesRequest append_entries_request_;
+
     /// Persistent votes, otherwise the pointer for the
     /// async call is dangling.
     std::vector<raft::VoteResponse> votes_;
 
+    /// Persistent for when we're the leader
+    std::vector<raft::AppendEntriesResponse> append_entries_responses_;
+
     /// Contexts for getting responses;
     std::vector<ClientCtxPtr> contexts_;
+
+    ///
+    int leader_rank_ = -1;
+
+    /// Broadcast time
+    std::unique_ptr<grpc_raft::Timer> leader_timer_;
 };

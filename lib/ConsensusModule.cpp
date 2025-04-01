@@ -24,11 +24,6 @@ ConsensusModule::ConsensusModule(const ClusterConfig& config):config_{config} {
     election_timeout_ = milliseconds(ms_time);
 
     state_ = State::FOLLOWER;
-    grpc_raft::Timer raft_timer(election_timeout_, [this]() {
-        OnElectionTimeout();
-    });
-    election_timer_ = std::move(raft_timer);
-
 }
 
 bool ConsensusModule::ConnectToPeers() {
@@ -38,9 +33,9 @@ bool ConsensusModule::ConnectToPeers() {
         if (channel->WaitForConnected(std::chrono::system_clock::now() + std::chrono::milliseconds(1000))) {
             std::cout << "Connected to " << value << "\n";
             connected++;
+            auto stub = raft::Consensus::NewStub(channel);
+            cluster_stubs_.push_back(std::move(stub));
         }
-        auto stub = raft::Consensus::NewStub(channel);
-        cluster_stubs_.push_back(std::move(stub));
     }
     if (connected == config_.other_ports().size()) {
         return true;
@@ -49,8 +44,12 @@ bool ConsensusModule::ConnectToPeers() {
     }
 }
 
-void ConsensusModule::Start() {
-    election_timer_.start();
+void ConsensusModule::StartElectionTimer() {
+    election_timer_ = std::make_unique<grpc_raft::Timer>();
+    auto self = shared_from_this();
+    election_timer_->Start(election_timeout_, [self]() {
+        self->OnElectionTimeout();
+    });
 }
 
 
@@ -68,12 +67,51 @@ ServerUnaryReactor *ConsensusModule::GetValue(grpc::CallbackServerContext* conte
 
 ServerUnaryReactor* ConsensusModule::AppendEntries(grpc::CallbackServerContext* context, const raft::AppendEntriesRequest* request, raft::AppendEntriesResponse* response) {
     ServerUnaryReactor* reactor = context->DefaultReactor();
+
+    if (state_ == State::FOLLOWER) {
+        if (request->logentries_size() == 0) {
+            std::cout << "Leader heartbeat received" << request->leaderid() << "\n";
+            leader_rank_ = request->leaderid();
+            StartElectionTimer();
+        }
+    }
+
+    if (state_ == State::CANDIDATE) {
+        // Getting an empty request from new leader,
+        if (request->logentries_size()) {
+            leader_rank_ = request->leaderid();
+            std::cout << "New leader found" << request->leaderid() << "\n";
+            // Updated in case we're
+            if (!new_leader_discovered_) {
+                new_leader_discovered_ = std::make_shared<std::atomic<bool>>(true);
+                StartElectionTimer();
+            }
+        }
+    }
     reactor->Finish(grpc::Status::OK);
     return reactor;
 }
 
 ServerUnaryReactor* ConsensusModule::RequestVote(grpc::CallbackServerContext * context, const raft::VoteRequest * request, raft::VoteResponse * response) {
     ServerUnaryReactor* reactor = context->DefaultReactor();
+
+    auto state = log_manager_.GetState();
+
+    if (request->term() == state.current_term) {
+        response->set_term(state.current_term);
+        response->set_votegranted(false);
+    }
+
+    if (request->term() > state.current_term) {
+        state.current_term = request->term();
+    }
+    // Check for null
+    if ((state.voted_for < 0) || (state.voted_for == request->candidateid())) {
+        response->set_term(state.current_term);
+        response->set_votegranted(true);
+        log_manager_.SetState(state);
+    }
+
     reactor->Finish(grpc::Status::OK);
     return reactor;
 }
@@ -95,30 +133,41 @@ void ConsensusModule::OnElectionTimeout() {
         vote_request_.set_term(new_state.current_term);
         log_manager_.SetState(new_state);
         election_count_ = std::make_shared<std::atomic<int>>(1);
-        auto cluster_count_excluding_myself = config_.other_ports().size();
+        new_leader_discovered_ = std::make_shared<std::atomic<bool>>(false);
+
+        auto connected_peers_size = cluster_stubs_.size();
 
         votes_.clear();
-        votes_.resize(cluster_count_excluding_myself);
+        votes_.resize(connected_peers_size);
         contexts_.clear();
-        for (int i = 0; i < cluster_count_excluding_myself; ++i) {
+        for (int i = 0; i < connected_peers_size; ++i) {
             auto ctx = std::make_unique<grpc::ClientContext>();
             contexts_.push_back(std::move(ctx));
         }
 
-        for (int i = 0; i < cluster_count_excluding_myself; i++) {
+        for (int i = 0; i < connected_peers_size; i++) {
             // Don't want responses to outlive this call.
             cluster_stubs_[i]->async()->RequestVote(contexts_[i].get(), &vote_request_, &votes_[i], [this, i](grpc::Status status) {
                 if (status.ok()) {
                     LOG(INFO) << "Vote request successfully completed.";
+                    if (new_leader_discovered_) {
+                        if (*new_leader_discovered_) {
+                            std::cout << "New leader discovered, cancelling election" << std::endl;
+                            votes_.clear();
+                            election_count_ = nullptr;
+                            return;
+                        }
+                    }
                     if (votes_[i].votegranted()) {
                         *election_count_ += 1;
-                        if (*election_count_ >= 2) {
+                        if (*election_count_ == 2) {
                             TransitionToLeader();
                         }
                     }
                 }
             });
         }
+
     }
 
     if (state_ == State::CANDIDATE) {
@@ -127,6 +176,28 @@ void ConsensusModule::OnElectionTimeout() {
 }
 
 void ConsensusModule::TransitionToLeader() {
+    std::cout << "Transitioning to leader" << std::endl;
+    auto cluster_count_excluding_myself = config_.other_ports().size();
+    contexts_.clear();
+    for (int i = 0; i < cluster_count_excluding_myself; ++i) {
+        auto ctx = std::make_unique<grpc::ClientContext>();
+        contexts_.push_back(std::move(ctx));
+    }
 
+    raft::AppendEntriesRequest append_entries_request;
+    append_entries_request.set_leaderid(config_.rank());
+    append_entries_request.clear_logentries();
+    append_entries_request_ = append_entries_request;
+    append_entries_responses_.clear();
+    append_entries_responses_.resize(cluster_count_excluding_myself);
+
+    for (int i = 0; i < cluster_count_excluding_myself; i++) {
+        // Don't want responses to outlive this call.
+        cluster_stubs_[i]->async()->AppendEntries(contexts_[i].get(), &append_entries_request_, &append_entries_responses_[i], [this, i](grpc::Status status) {
+            if (status.ok()) {
+                std::cout << "Append entries successfully completed." << std::endl;
+            }
+        });
+    }
 }
 

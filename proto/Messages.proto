@@ -57,7 +57,7 @@ message AppendEntriesRequest {
   uint32 previousLogTerm = 4;
   /// Log entries to store (for this application its just going to be one).
   repeated LogEntry logEntries = 5;
-  ///
+  /// Leaders commit Index
   uint32 leaderCommitIndex = 6;
 }
 

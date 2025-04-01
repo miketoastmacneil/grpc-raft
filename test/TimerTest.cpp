@@ -11,10 +11,10 @@ TEST_CASE("TimerInvokesCallbackOnTimeout", "[TimerTest]") {
         timed_out = true;
     });
 
-    timer.start();
+    timer.Start();
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
-    CHECK(!timed_out);
+    CHECK(timed_out);
 }
 
 TEST_CASE("TimerDoesNotInvokeOnRest", "[TimerTest]") {
@@ -23,9 +23,9 @@ TEST_CASE("TimerDoesNotInvokeOnRest", "[TimerTest]") {
         timed_out = true;
     });
 
-    timer.start();
+    timer.Start();
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    timer.reset();
+    timer.Reset();
 
     CHECK(!timed_out);
 }
@@ -36,10 +36,10 @@ TEST_CASE("TimerStoppedTwiceIsIdempotent", "[TimerTest]") {
         timed_out = true;
     });
 
-    timer.start();
+    timer.Start();
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    timer.reset();
-    timer.reset();
+    timer.Reset();
+    timer.Reset();
 
     CHECK(!timed_out);
 }

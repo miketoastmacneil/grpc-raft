@@ -27,5 +27,5 @@ target_link_libraries(grpc_raft PUBLIC
         absl::flags
         absl::flags_parse
         tomlplusplus::tomlplusplus
-        nlohmann_json::nlohmann_json
+        ${Folly_LIBRARIES}
 )

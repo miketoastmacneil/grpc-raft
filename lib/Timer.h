@@ -13,9 +13,9 @@ namespace grpc_raft {
 
 using milliseconds = std::chrono::milliseconds;
 
-class Timer {
+class Timer: public std::enable_shared_from_this<Timer> {
 public:
-    Timer() = default;
+    Timer();
 
     ~Timer();
 
@@ -25,8 +25,13 @@ public:
 
 private:
 
+    void Run();
+
+    milliseconds duration_;
     std::thread thread_;
-    std::shared_ptr<std::atomic<bool>> interrupt_;
+    bool active_;
+    bool kill_timer_;
+    std::function<void()> callback_;
 };
 
 }

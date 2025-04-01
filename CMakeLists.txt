@@ -3,6 +3,11 @@ project(grpc_raft CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_PREFIX_PATH "/Users/mikemacneil/.local")
+list(APPEND CMAKE_PREFIX_PATH "/opt/homebrew/opt/boost" "/opt/homebrew/opt/folly")
+set(CMAKE_MODULE_PATH  "/opt/homebrew/Cellar/cmake/3.30.2/share/cmake/Modules/")
+if(POLICY CMP0167)
+    cmake_policy(SET CMP0167 OLD)
+endif()
 
 include(FetchContent)
 FetchContent_Declare(
@@ -14,7 +19,7 @@ FetchContent_MakeAvailable(tomlplusplus)
 
 find_package(Protobuf CONFIG REQUIRED)
 find_package(gRPC CONFIG REQUIRED)
-find_package(nlohmann_json 3.11.3 REQUIRED)
+find_package(folly REQUIRED)
 
 add_library(protolib OBJECT proto/Messages.proto)
 target_link_libraries(protolib PUBLIC protobuf::libprotobuf gRPC::grpc++)

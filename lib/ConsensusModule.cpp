@@ -102,9 +102,9 @@ ServerUnaryReactor* ConsensusModule::AppendEntries(grpc::CallbackServerContext* 
             // Updated in case we're
             if (!new_leader_discovered_) {
                 new_leader_discovered_ = std::make_shared<std::atomic<bool>>(true);
+                state_ == State::FOLLOWER;
                 StartElectionTimer();
             }
-            state_ == State::FOLLOWER;
         }
     }
     reactor->Finish(grpc::Status::OK);
@@ -114,29 +114,41 @@ ServerUnaryReactor* ConsensusModule::AppendEntries(grpc::CallbackServerContext* 
 ServerUnaryReactor* ConsensusModule::RequestVote(grpc::CallbackServerContext * context, const raft::VoteRequest * request, raft::VoteResponse * response) {
     ServerUnaryReactor* reactor = context->DefaultReactor();
 
+    // Votes are first-come-first serve, so we lock to serve one at a time.
+    std::lock_guard lock(vote_mutex);
     auto state = log_manager_.GetState();
     // If we're a candidate, we've already voted for ourselves.
     std::cout << "VoteRequest received from: " << request->candidateid() << "\n";
     std::cout << "State: [term: " << state.current_term << ", votedFor: "<< state.voted_for << "]\n";
 
+    // If the request has a term equal to ours, we have already voted
+    // so we ignore, otherwise, if we're a candidate, we've already voted for ourselves,
+    // so we also ignore.
     if (request->term() == state.current_term || state_ == State::CANDIDATE) {
         std::cout << "Already voted, ignoring" << request->candidateid() << "\n";
         response->set_term(state.current_term);
         response->set_votegranted(false);
-        // If our states term matches the request, we have already voted for someone
         reactor->Finish(grpc::Status::OK);
         return reactor;
     }
 
     if (request->term() > state.current_term) {
-        std::cout << "VoteRequest from " << request->candidateid() << " has term: " << request->term() << " current: " << state.current_term << "\n";
+        std::cout << "VoteRequest from " << request->candidateid()
+                    << " has term: " << request->term()
+                    << " current: " << state.current_term << "\n";
         state.current_term = request->term();
         // We haven't voted for anyone in this term so set to
         // null
         state.voted_for = -1;
+
+        // According to the general rules we immediately convert to
+        // a follower and initialize a timer.
+        state_ = State::FOLLOWER;
         StartElectionTimer();
     }
 
+    // If we haven't voted for anyone this term, or we already voted for this
+    // candidate, grant the vote.
     if ((state.voted_for < 0) || (state.voted_for == request->candidateid())) {
         response->set_term(state.current_term);
         response->set_votegranted(true);
@@ -152,6 +164,8 @@ void ConsensusModule::OnElectionTimeout() {
     if (state_ == State::FOLLOWER) {
         std::cout << "Election timeout " << std::endl;
         state_ = State::CANDIDATE;
+
+
         vote_request_ = raft::VoteRequest();
         vote_request_.set_candidateid(config_.rank());
         auto log_entries = log_manager_.LogEntries();
@@ -159,13 +173,19 @@ void ConsensusModule::OnElectionTimeout() {
             vote_request_.set_lastlogindex(0);
             vote_request_.set_lastlogterm(0);
         }
-        auto state = log_manager_.GetState();
-        PersistentState new_state = state;
-        new_state.current_term += 1;
-        new_state.voted_for = config_.rank();
-        // Increment term now that we're a candidate
-        vote_request_.set_term(new_state.current_term);
-        log_manager_.SetState(new_state);
+        {
+            // This counts as voting, which is done in FIFO order.
+            // So we lock
+            std::lock_guard lock(vote_mutex);
+            auto state = log_manager_.GetState();
+            PersistentState new_state = state;
+            new_state.current_term += 1;
+            new_state.voted_for = config_.rank();
+            // Increment term now that we're a candidate
+            vote_request_.set_term(new_state.current_term);
+            log_manager_.SetState(new_state);
+        }
+
         election_count_ = std::make_shared<std::atomic<int>>(1);
         new_leader_discovered_ = std::make_shared<std::atomic<bool>>(false);
 
@@ -194,7 +214,8 @@ void ConsensusModule::OnElectionTimeout() {
                     }
                     if (votes_[i].votegranted()) {
                         *election_count_ += 1;
-                        // Once we have a majority start
+                        // Once we have a majority, transition to leader and issue
+                        // the AppendEntries Heartbeat.
                         if (*election_count_ == 3) {
                             StartLeaderHeartbeat();
                         }

@@ -22,7 +22,7 @@ ConsensusModule::ConsensusModule(const ClusterConfig& config):config_{config} {
     absl::BitGen bitgen;
     uint32_t ms_time = absl::uniform_int_distribution<uint32_t>(config.timeout_min(), config.timeout_max())(bitgen);
     election_timeout_ = milliseconds(ms_time);
-    leader_timeout_ = milliseconds(50);
+    leader_timeout_ = milliseconds(500);
 
     state_ = State::FOLLOWER;
     election_timer_ = std::make_unique<grpc_raft::Timer>();
@@ -100,6 +100,7 @@ ServerUnaryReactor* ConsensusModule::AppendEntries(grpc::CallbackServerContext* 
                 new_leader_discovered_ = std::make_shared<std::atomic<bool>>(true);
                 StartElectionTimer();
             }
+            state_ == State::FOLLOWER;
         }
     }
     reactor->Finish(grpc::Status::OK);
@@ -111,6 +112,7 @@ ServerUnaryReactor* ConsensusModule::RequestVote(grpc::CallbackServerContext * c
 
     auto state = log_manager_.GetState();
     // If we're a candidate, we've already voted for ourselves.
+    std::cout << "VoteRequest received from: " << request->candidateid() << "\n";
     if (state_ == State::CANDIDATE) {
         response->set_term(state.current_term);
         response->set_votegranted(false);
@@ -121,11 +123,13 @@ ServerUnaryReactor* ConsensusModule::RequestVote(grpc::CallbackServerContext * c
     if (request->term() == state.current_term) {
         response->set_term(state.current_term);
         response->set_votegranted(false);
-        std::cout << "VoteRequest received from: " << request->candidateid() << "ignoring \n";
     }
 
     if (request->term() > state.current_term) {
         state.current_term = request->term();
+        // We haven't voted for anyone in this term so set to
+        // null
+        state.voted_for = -1;
     }
 
     if ((state.voted_for < 0) || (state.voted_for == request->candidateid())) {
@@ -141,7 +145,7 @@ ServerUnaryReactor* ConsensusModule::RequestVote(grpc::CallbackServerContext * c
 }
 void ConsensusModule::OnElectionTimeout() {
     if (state_ == State::FOLLOWER) {
-        LOG(INFO) << "Election timeout for rank: " << config_.rank() << std::endl;
+        std::cout << "Election timeout " << std::endl;
         state_ = State::CANDIDATE;
         vote_request_ = raft::VoteRequest();
         vote_request_.set_candidateid(config_.rank());

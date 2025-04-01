@@ -22,6 +22,7 @@ ConsensusModule::ConsensusModule(const ClusterConfig& config):config_{config} {
     absl::BitGen bitgen;
     uint32_t ms_time = absl::uniform_int_distribution<uint32_t>(config.timeout_min(), config.timeout_max())(bitgen);
     election_timeout_ = milliseconds(ms_time);
+    leader_timeout_ = milliseconds(20);
 
     state_ = State::FOLLOWER;
 }
@@ -50,6 +51,19 @@ void ConsensusModule::StartElectionTimer() {
     election_timer_->Start(election_timeout_, [self]() {
         self->OnElectionTimeout();
     });
+}
+
+void ConsensusModule::StartLeaderHeartbeat() {
+    leader_timer_ = std::make_unique<grpc_raft::Timer>();
+    auto self = shared_from_this();
+    leader_timer_->Start(leader_timeout_, [self]() {
+        self->BroadcastHeartbeat();
+        self->StartLeaderHeartbeat();
+    });
+}
+
+void ConsensusModule::BroadcastHeartbeat() {
+
 }
 
 
@@ -96,19 +110,29 @@ ServerUnaryReactor* ConsensusModule::RequestVote(grpc::CallbackServerContext * c
     ServerUnaryReactor* reactor = context->DefaultReactor();
 
     auto state = log_manager_.GetState();
+    // Only vote for someone else if we're not a candidate
+    if (state_ == State::CANDIDATE) {
+        response->set_term(state.current_term);
+        response->set_votegranted(false);
+        reactor->Finish(grpc::Status::OK);
+        return reactor;
+    }
 
     if (request->term() == state.current_term) {
         response->set_term(state.current_term);
         response->set_votegranted(false);
+        std::cout << "VoteRequest received from: " << request->candidateid() << "ignoring \n";
     }
 
     if (request->term() > state.current_term) {
         state.current_term = request->term();
     }
-    // Check for null
+
     if ((state.voted_for < 0) || (state.voted_for == request->candidateid())) {
         response->set_term(state.current_term);
         response->set_votegranted(true);
+        std::cout << "Voting for " << request->candidateid() << "\n";
+        state.voted_for = request->candidateid();
         log_manager_.SetState(state);
     }
 
@@ -161,7 +185,7 @@ void ConsensusModule::OnElectionTimeout() {
                     if (votes_[i].votegranted()) {
                         *election_count_ += 1;
                         if (*election_count_ == 2) {
-                            TransitionToLeader();
+                            SendLeaderHeartbeat();
                         }
                     }
                 }
@@ -175,8 +199,8 @@ void ConsensusModule::OnElectionTimeout() {
     }
 }
 
-void ConsensusModule::TransitionToLeader() {
-    std::cout << "Transitioning to leader" << std::endl;
+void ConsensusModule::SendLeaderHeartbeat() {
+    std::cout << "Sending Leader Heartbeat" << std::endl;
     auto cluster_count_excluding_myself = config_.other_ports().size();
     contexts_.clear();
     for (int i = 0; i < cluster_count_excluding_myself; ++i) {

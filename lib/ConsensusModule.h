@@ -51,9 +51,11 @@ private:
 
     void OnElectionTimeout();
 
-    void TransitionToLeader();
+    void SendLeaderHeartbeat();
 
     void StartLeaderHeartbeat();
+
+    void BroadcastHeartbeat();
 
     ClusterConfig config_;
     std::atomic<State> state_;
@@ -97,6 +99,9 @@ private:
     ///
     int leader_rank_ = -1;
 
-    /// Broadcast time
+    /// Broadcast timer
     std::unique_ptr<grpc_raft::Timer> leader_timer_;
+
+    /// Leader heartbeat, just needs to be << timeout
+    milliseconds leader_timeout_;
 };

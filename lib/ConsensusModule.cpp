@@ -10,6 +10,10 @@
 #include <absl/random/random.h>
 #include <grpcpp/create_channel.h>
 
+namespace {
+std::mutex vote_mutex;
+}
+
 ConsensusModule::ConsensusModule(const ClusterConfig& config):config_{config} {
 
     // Logging from std out, not the log we're maintaining
@@ -113,23 +117,24 @@ ServerUnaryReactor* ConsensusModule::RequestVote(grpc::CallbackServerContext * c
     auto state = log_manager_.GetState();
     // If we're a candidate, we've already voted for ourselves.
     std::cout << "VoteRequest received from: " << request->candidateid() << "\n";
-    if (state_ == State::CANDIDATE) {
+    std::cout << "State: [term: " << state.current_term << ", votedFor: "<< state.voted_for << "]\n";
+
+    if (request->term() == state.current_term || state_ == State::CANDIDATE) {
+        std::cout << "Already voted, ignoring" << request->candidateid() << "\n";
         response->set_term(state.current_term);
         response->set_votegranted(false);
+        // If our states term matches the request, we have already voted for someone
         reactor->Finish(grpc::Status::OK);
         return reactor;
     }
 
-    if (request->term() == state.current_term) {
-        response->set_term(state.current_term);
-        response->set_votegranted(false);
-    }
-
     if (request->term() > state.current_term) {
+        std::cout << "VoteRequest from " << request->candidateid() << " has term: " << request->term() << " current: " << state.current_term << "\n";
         state.current_term = request->term();
         // We haven't voted for anyone in this term so set to
         // null
         state.voted_for = -1;
+        StartElectionTimer();
     }
 
     if ((state.voted_for < 0) || (state.voted_for == request->candidateid())) {
@@ -157,6 +162,7 @@ void ConsensusModule::OnElectionTimeout() {
         auto state = log_manager_.GetState();
         PersistentState new_state = state;
         new_state.current_term += 1;
+        new_state.voted_for = config_.rank();
         // Increment term now that we're a candidate
         vote_request_.set_term(new_state.current_term);
         log_manager_.SetState(new_state);

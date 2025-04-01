@@ -4,10 +4,10 @@
 
 #include "PersistentStateManager.h"
 
-#include <format>
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
+#include <shared_mutex>
 
 namespace fs = std::filesystem;
 

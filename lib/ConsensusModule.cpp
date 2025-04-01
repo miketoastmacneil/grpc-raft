@@ -22,9 +22,11 @@ ConsensusModule::ConsensusModule(const ClusterConfig& config):config_{config} {
     absl::BitGen bitgen;
     uint32_t ms_time = absl::uniform_int_distribution<uint32_t>(config.timeout_min(), config.timeout_max())(bitgen);
     election_timeout_ = milliseconds(ms_time);
-    leader_timeout_ = milliseconds(20);
+    leader_timeout_ = milliseconds(50);
 
     state_ = State::FOLLOWER;
+    election_timer_ = std::make_unique<grpc_raft::Timer>();
+    leader_timer_ = std::make_unique<grpc_raft::Timer>();
 }
 
 bool ConsensusModule::ConnectToPeers() {
@@ -46,7 +48,6 @@ bool ConsensusModule::ConnectToPeers() {
 }
 
 void ConsensusModule::StartElectionTimer() {
-    election_timer_ = std::make_unique<grpc_raft::Timer>();
     auto self = shared_from_this();
     election_timer_->Start(election_timeout_, [self]() {
         self->OnElectionTimeout();
@@ -54,10 +55,9 @@ void ConsensusModule::StartElectionTimer() {
 }
 
 void ConsensusModule::StartLeaderHeartbeat() {
-    leader_timer_ = std::make_unique<grpc_raft::Timer>();
     auto self = shared_from_this();
     leader_timer_->Start(leader_timeout_, [self]() {
-        self->BroadcastHeartbeat();
+        self->SendLeaderHeartbeat();
         self->StartLeaderHeartbeat();
     });
 }
@@ -110,7 +110,7 @@ ServerUnaryReactor* ConsensusModule::RequestVote(grpc::CallbackServerContext * c
     ServerUnaryReactor* reactor = context->DefaultReactor();
 
     auto state = log_manager_.GetState();
-    // Only vote for someone else if we're not a candidate
+    // If we're a candidate, we've already voted for ourselves.
     if (state_ == State::CANDIDATE) {
         response->set_term(state.current_term);
         response->set_votegranted(false);
@@ -184,8 +184,9 @@ void ConsensusModule::OnElectionTimeout() {
                     }
                     if (votes_[i].votegranted()) {
                         *election_count_ += 1;
-                        if (*election_count_ == 2) {
-                            SendLeaderHeartbeat();
+                        // Once we have a majority start
+                        if (*election_count_ == 3) {
+                            StartLeaderHeartbeat();
                         }
                     }
                 }

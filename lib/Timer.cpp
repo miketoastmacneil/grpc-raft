@@ -16,7 +16,7 @@ using TimerCallback = std::function<void()>;
 
 Timer::~Timer() {
     if (thread_.joinable()) {
-        thread_.join();
+        thread_.detach();
     }
 }
 
@@ -40,7 +40,7 @@ void Timer::Stop() {
         *interrupt_ = true;
     }
     if (thread_.joinable()) {
-        thread_.join();
+        thread_.detach();
     }
 }
 

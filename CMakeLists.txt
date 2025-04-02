@@ -19,7 +19,7 @@ FetchContent_MakeAvailable(tomlplusplus)
 
 find_package(Protobuf CONFIG REQUIRED)
 find_package(gRPC CONFIG REQUIRED)
-find_package(folly REQUIRED)
+find_package(nlohmann_json 3.11.3 REQUIRED)
 
 add_library(protolib OBJECT proto/Messages.proto)
 target_link_libraries(protolib PUBLIC protobuf::libprotobuf gRPC::grpc++)

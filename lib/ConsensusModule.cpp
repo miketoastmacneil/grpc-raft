@@ -14,7 +14,7 @@ namespace {
 std::mutex vote_mutex;
 }
 
-ConsensusModule::ConsensusModule(const ClusterConfig& config):config_{config} {
+ConsensusModule::ConsensusModule(const ClusterConfig& config):config_{config}, election_timer_{}, leader_timer_{} {
 
     // Logging from std out, not the log we're maintaining
     absl::InitializeLog();
@@ -29,8 +29,6 @@ ConsensusModule::ConsensusModule(const ClusterConfig& config):config_{config} {
     leader_timeout_ = milliseconds(500);
 
     state_ = State::FOLLOWER;
-    election_timer_ = std::make_unique<grpc_raft::Timer>();
-    leader_timer_ = std::make_unique<grpc_raft::Timer>();
 }
 
 bool ConsensusModule::ConnectToPeers() {
@@ -53,14 +51,14 @@ bool ConsensusModule::ConnectToPeers() {
 
 void ConsensusModule::StartElectionTimer() {
     auto self = shared_from_this();
-    election_timer_->Start(election_timeout_, [self]() {
+    election_timer_.Start(election_timeout_, [self]() {
         self->OnElectionTimeout();
     });
 }
 
 void ConsensusModule::StartLeaderHeartbeat() {
     auto self = shared_from_this();
-    leader_timer_->Start(leader_timeout_, [self]() {
+    leader_timer_.Start(leader_timeout_, [self]() {
         self->SendLeaderHeartbeat();
         self->StartLeaderHeartbeat();
     });

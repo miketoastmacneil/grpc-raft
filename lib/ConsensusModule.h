@@ -60,7 +60,7 @@ private:
     ClusterConfig config_;
     std::atomic<State> state_;
     milliseconds election_timeout_;
-    std::shared_ptr<grpc_raft::Timer> election_timer_;
+    grpc_raft::Timer election_timer_;
 
     // Book keeping when requesting votes.
     AtomicIntPtr election_count_ = nullptr;
@@ -100,7 +100,7 @@ private:
     int leader_rank_ = -1;
 
     /// Broadcast timer
-    std::shared_ptr<grpc_raft::Timer> leader_timer_;
+    grpc_raft::Timer leader_timer_;
 
     /// Leader heartbeat, just needs to be << timeout
     milliseconds leader_timeout_;

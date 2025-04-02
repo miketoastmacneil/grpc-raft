@@ -12,77 +12,100 @@ namespace {
     // signalling.
     std::mutex mutex_;
     std::condition_variable notifier_;
-    std::condition_variable timer_condition_variable_;
+    std::condition_variable timer_cv_;
+    std::thread thread_;
 }
 
 using BoolRef = const std::shared_ptr<std::atomic_bool>;
+using DurationRef = const std::shared_ptr<std::chrono::milliseconds>;
 using TimerCallback = std::function<void()>;
+using CallbackRef = const std::shared_ptr<std::function<void()>>;
+
+void Run(DurationRef duration, CallbackRef callback, BoolRef active, BoolRef kill, BoolRef interrupt_acknowledgement) {
+
+    auto kill_predicate = [=]() {
+        if (kill) {
+            return (*kill).load();
+        }
+        // If kill is now null, return
+        return true;
+    };
+
+    while (!kill_predicate()) {
+        std::unique_lock<std::mutex> lock(mutex_);
+        if (interrupt_acknowledgement->load()) {
+            interrupt_acknowledgement->notify_one();
+        }
+
+        auto wait_for_start_predicate = [=]() {
+            return active->load() || kill->load();
+        };
+
+        notifier_.wait(lock, wait_for_start_predicate);
+
+        if (kill_predicate()) break;
+        auto interrupt_invoked = [=]() {
+            return !(active->load())|| (kill->load());
+        };
+
+        timer_cv_.wait_for(lock, *duration, interrupt_invoked);
+        if (interrupt_invoked()) {
+            // Signal back that we were interrupted and continuing.
+            interrupt_acknowledgement->store(true);
+            continue;
+        }
+
+        if (callback) {
+            // Lock is re-acquired at the next iteration of
+            // the loop
+            lock.unlock();
+            callback->operator()();
+        }
+    }
+
+}
+
 
 Timer::Timer() {
-    duration_ = std::chrono::milliseconds(0);
-    callback_ = nullptr;
-    kill_timer_ = false;
-    active_ = false;
-
-    thread_ = std::thread([this]() {
-        // Capturing self keeps this alive, otherwise
-        this->Run();
-    });
+    duration_ = std::make_shared<milliseconds>(0);
+    callback_ = std::make_shared<std::function<void()>>();
+    active_ = std::make_shared<std::atomic<bool>>(false);
+    kill_timer_ = std::make_shared<std::atomic<bool>>(false);
+    interrupt_acknowledgement_ = std::make_shared<std::atomic<bool>>(false);
 }
 
 Timer::~Timer() {
-    kill_timer_ = true;
+    active_->store(true);
+    kill_timer_->store(true);
+    notifier_.notify_all();
+    timer_cv_.notify_all();
     if (thread_.joinable()) {
         thread_.join();
     }
 }
 
 void Timer::Start(milliseconds duration, TimerCallback callback) {
-    Stop();
-    std::lock_guard<std::mutex> lock(mutex_);
-    duration_ = duration;
-    callback_ = callback;
-    active_ = true;
+    std::unique_lock<std::mutex> lock(mutex_);
+    if (!thread_.joinable()) {
+        thread_ = std::thread(Run, duration_, callback_, active_, kill_timer_, interrupt_acknowledgement_);
+    }
+    if (active_->load()) {
+        // Yield the lock to Stop function.
+        lock.unlock();
+        Stop();
+        interrupt_acknowledgement_->wait(false);
+        lock.lock();
+    }
+    interrupt_acknowledgement_->store(false);
+    *duration_ = duration;
+    *callback_ = callback;
+    active_->store(true);
     notifier_.notify_one();
 }
 
 void Timer::Stop() {
-    std::lock_guard<std::mutex> lock(mutex_);
-    active_ = false;
-    notifier_.notify_one();
-}
-
-void Timer::Run() {
-    while (!kill_timer_){
-        std::unique_lock<std::mutex> lock(mutex_);
-
-        // This will exist here since we've passed by shared.
-        // Modifications to kill_timer_ as well as
-        // active are guarded by locks
-        auto wait_for_start_predicate = [this]() {
-            return active_ || kill_timer_;
-        };
-
-        notifier_.wait(lock, wait_for_start_predicate);
-
-        if (kill_timer_) {
-            break;
-        }
-
-        auto interrupt_invoked = [this]() {
-            return !active_ || kill_timer_;
-        };
-
-        timer_condition_variable_.wait_for(lock, duration_, interrupt_invoked);
-
-        if (!interrupt_invoked() || callback_) {
-            active_ = false;
-            // Lock is re-acquired at the next iteration of
-            // the loop
-            lock.unlock();
-            callback_();
-        }
-    }
+    active_->store(false);
+    timer_cv_.notify_one();
 }
 
 }

@@ -7,11 +7,11 @@
 
 TEST_CASE("TimerInvokesCallbackOnTimeout", "[TimerTest]") {
     std::atomic<bool> timed_out(false);
-    grpc_raft::Timer timer(std::chrono::milliseconds(150),[&timed_out]() {
+    grpc_raft::Timer timer;
+
+    timer.Start(std::chrono::milliseconds(150),[&timed_out]() {
         timed_out = true;
     });
-
-    timer.Start();
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
     CHECK(timed_out);
@@ -19,27 +19,32 @@ TEST_CASE("TimerInvokesCallbackOnTimeout", "[TimerTest]") {
 
 TEST_CASE("TimerDoesNotInvokeOnRest", "[TimerTest]") {
     std::atomic<bool> timed_out(false);
-    grpc_raft::Timer timer(std::chrono::milliseconds(150),[&timed_out]() {
+    grpc_raft::Timer timer;
+
+    timer.Start(std::chrono::milliseconds(150),[&timed_out]() {
         timed_out = true;
     });
-
-    timer.Start();
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    timer.Reset();
+    timer.Stop();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
     CHECK(!timed_out);
 }
 
 TEST_CASE("TimerStoppedTwiceIsIdempotent", "[TimerTest]") {
-    std::atomic<bool> timed_out(false);
-    grpc_raft::Timer timer(std::chrono::milliseconds(150),[&timed_out]() {
-        timed_out = true;
+    std::shared_ptr<std::atomic<bool>> signal =std::make_shared<std::atomic<bool>>(true);
+    bool second_invoked = false;
+    grpc_raft::Timer timer;
+
+
+    timer.Start(std::chrono::milliseconds(100),[signal, &timer, &second_invoked]() {
+        if (signal) {
+            timer.Start(std::chrono::milliseconds(150),[signal, &timer, &second_invoked]() {
+                second_invoked = true;
+            });
+        }
     });
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
 
-    timer.Start();
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    timer.Reset();
-    timer.Reset();
-
-    CHECK(!timed_out);
+    CHECK(second_invoked);
 }

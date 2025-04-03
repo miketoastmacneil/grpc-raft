@@ -185,7 +185,6 @@ void ConsensusModule::OnElectionTimeout() {
         }
 
         election_count_ = std::make_shared<std::atomic<int>>(1);
-        new_leader_discovered_ = std::make_shared<std::atomic<bool>>(false);
 
         auto connected_peers_size = cluster_stubs_.size();
 
@@ -202,13 +201,8 @@ void ConsensusModule::OnElectionTimeout() {
             cluster_stubs_[i]->async()->RequestVote(contexts_[i].get(), &vote_request_, &votes_[i], [this, i](grpc::Status status) {
                 if (status.ok()) {
                     LOG(INFO) << "Vote request successfully completed.";
-                    if (new_leader_discovered_) {
-                        if (*new_leader_discovered_) {
-                            std::cout << "New leader discovered, cancelling election" << std::endl;
-                            votes_.clear();
-                            election_count_ = nullptr;
-                            return;
-                        }
+                    if (state_ == State::FOLLOWER) {
+                        std::cout << "Reverted to follower" << std::endl;
                     }
                     if (votes_[i].votegranted()) {
                         *election_count_ += 1;

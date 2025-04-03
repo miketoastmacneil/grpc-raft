@@ -31,6 +31,13 @@ private:
     std::shared_ptr<std::atomic<bool>> kill_timer_;
     std::shared_ptr<std::atomic<bool>> interrupt_acknowledgement_;
     std::shared_ptr<std::function<void()>> callback_;
+
+    // This mutex guards the conditional variable for
+    // signalling.
+    std::shared_ptr<std::mutex> mutex_;
+    std::shared_ptr<std::condition_variable> notifier_;
+    std::shared_ptr<std::condition_variable> timer_cv_;
+    std::shared_ptr<std::thread> thread_;
 };
 
 }
